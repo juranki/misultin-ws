@@ -158,22 +158,31 @@ body(#c{sock = Sock} = C, Req) ->
 					inet:setopts(Sock, [{packet, http}]),
 					request(C, #req{})
 			end;
-		'POST' when is_integer(Req#req.content_length) ->
-			inet:setopts(Sock, [{packet, raw}]),
-			case gen_tcp:recv(Sock, Req#req.content_length, 2*?SERVER_IDLE_TIMEOUT) of
-				{ok, Bin} ->
-					Close = handle_post(C, Req#req{body = Bin}),
-					case Close of
-						close ->
-							gen_tcp:close(Sock);
-						keep_alive ->
-							inet:setopts(Sock, [{packet, http}]),
-							request(C, #req{})
-					end;
-				_Other ->
-					exit(normal)
+		'POST' ->
+			case catch list_to_integer(Req#req.content_length) of 
+				{'EXIT', _} ->
+					% TODO: provide a fallback when content length is not or wrongly specified
+					?DEBUG(debug, "specified content length is not a valid integer number: ~p", [Req#req.content_length]),
+					send(C#c.sock, ?CONTENT_LENGTH_REQUIRED_411),
+					exit(normal);
+				Len ->
+					inet:setopts(Sock, [{packet, raw}]),
+					case gen_tcp:recv(Sock, Len, 2*?SERVER_IDLE_TIMEOUT) of
+						{ok, Bin} ->
+							Close = handle_post(C, Req#req{body = Bin}),
+							case Close of
+								close ->
+									gen_tcp:close(Sock);
+								keep_alive ->
+									inet:setopts(Sock, [{packet, http}]),
+									request(C, #req{})
+							end;
+						_Other ->
+							exit(normal)
+					end
 			end;
 		_Other ->
+			?DEBUG(debug, "method not implemented: ~p", [_Other]),
 			send(C#c.sock, ?NOT_IMPLEMENTED_501),
 			exit(normal)
 	end.
@@ -317,7 +326,7 @@ split_at_q_mark([], Acc) ->
 
 % TCP send
 send(Sock, Data) ->
-	?DEBUG(debug, "sending data", []),
+	?DEBUG(debug, "sending data: ~p", [Data]),
 	case gen_tcp:send(Sock, Data) of
 		ok ->
 			ok;
