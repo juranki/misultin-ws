@@ -45,7 +45,7 @@
 % API
 -export([raw/0]).
 -export([ok/1, ok/2, ok/3, respond/2, respond/3, respond/4, stream/1, stream/2, stream/3]).
--export([get/1, parse_qs/0, parse_post/0, file/1, file/2, resource/1]).
+-export([get/1, parse_qs/0, parse_post/0, file/1, file/2, resource/1, ws/1, ws/2]).
 
 % includes
 -include("../include/misultin.hrl").
@@ -88,7 +88,13 @@ stream(Template, Vars) when is_list(Template) =:= true ->
 stream(head, HttpCode, Headers) ->
 	SocketPid ! {stream_head, HttpCode, Headers}.
 
-% Description: Sends a file for download.
+% Description: Websocket functions
+ws(close) ->
+	SocketPid ! stream_close;
+ws(Message) ->
+	SocketPid ! {send, Message}.
+ws(head, Headers) ->
+        SocketPid ! {head, 101, Headers}.
 
 	
 % Description: Sends a file to the browser.
@@ -119,6 +125,10 @@ get(args) ->
 	Req#req.args;
 get(headers) ->
 	Req#req.headers;
+get(upgrade) ->
+	Req#req.upgrade;
+get(ws_protocol) ->
+	Req#req.ws_protocol;
 get(body) ->
 	Req#req.body.
 

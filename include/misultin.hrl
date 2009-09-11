@@ -87,5 +87,7 @@
 	uri,						% Truncated URI /index.html
 	args = "",					% Part of URI after ?
 	headers,					% [{Tag, Val}]
+        upgrade = "",                                   % 
+        ws_protocol = "",                               %
 	body = <<>>					% Content Body
 }).

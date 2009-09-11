@@ -40,7 +40,7 @@
 -export([init/3]).
 
 % internale
--export([socket_loop/1]).
+-export([socket_loop/1,web_socket_loop/3]).
 
 % macros
 -define(MAX_HEADERS_COUNT, 100).
@@ -65,6 +65,7 @@ start_link(ListenSocket, ListenPort, Loop) ->
 
 % Description: Initiates the socket.
 init(ListenSocket, ListenPort, Loop) ->
+            error_logger:info_report(socket_init),
 	case catch gen_tcp:accept(ListenSocket) of
 	{ok, Socket} ->
 		?DEBUG(debug, "accepted an incoming TCP connection", []),
@@ -105,6 +106,10 @@ headers(C, Req, H, HeaderCount) when HeaderCount =< ?MAX_HEADERS_COUNT ->
 	case gen_tcp:recv(C#c.sock, 0, ?SERVER_IDLE_TIMEOUT) of
 		{ok, {http_header, _, 'Content-Length', _, Val}} ->
 			headers(C, Req#req{content_length = Val}, [{'Content-Length', Val}|H], HeaderCount + 1);
+		{ok, {http_header, _, 'Upgrade', _, Val}} ->
+			headers(C, Req#req{upgrade = Val}, [{'Upgrade', Val}|H], HeaderCount + 1);
+		{ok, {http_header, _, 'WebSocket-Protocol', _, Val}} ->
+			headers(C, Req#req{ws_protocol = Val}, [{'WebSocket-Protocol', Val}|H], HeaderCount + 1);
 		{ok, {http_header, _, 'Connection', _, Val}} ->
 			KeepAlive = keep_alive(Req#req.vsn, Val),
 			headers(C, Req#req{connection = KeepAlive}, [{'Connection', Val}|H], HeaderCount + 1);
@@ -232,7 +237,16 @@ handle_post(C, #req{connection = Conn} = Req) ->
 % Description: Main dispatcher
 call_mfa(#c{sock = Sock, loop = Loop} = C, Request) ->
 	% spawn listening process for Request messages
-	SocketPid = spawn(?MODULE, socket_loop, [C]),
+        SocketPid = case Request#req.upgrade of
+                        "WebSocket" ->
+                            SP = spawn(?MODULE, web_socket_loop, [C,self(),<<>>]),
+                            inet:setopts(Sock,[{active,true},
+                                               {packet,raw}]),
+                            ok = gen_tcp:controlling_process(Sock,SP),
+                            SP;
+                        _ ->
+                            spawn(?MODULE, socket_loop, [C])
+                    end,
 	% create request
 	Req = misultin_req:new(Request, SocketPid),
 	% call loop
@@ -301,6 +315,49 @@ add_content_length(Headers, Body) ->
 		false ->
 			Headers
 	end.
+
+web_socket_loop(#c{sock = Sock} = C,Pid,Buf) ->
+    %error_logger:info_report(wsl), 
+    receive
+        {head, HttpCode, Headers} ->
+            ?DEBUG(debug, "sending stream head", []),
+            Enc_headers = enc_headers(Headers),
+            %error_logger:info_report({head,Enc_headers}),
+            Resp = ["HTTP/1.1 ", integer_to_list(HttpCode), " OK\r\n", Enc_headers, <<"\r\n">>],
+            send(Sock, Resp),
+            web_socket_loop(C,Pid,Buf);
+        {send, Body} ->
+            ?DEBUG(debug, "sending stream data", []),
+            send(Sock, <<0,Body/binary,255>>),
+            web_socket_loop(C,Pid,Buf);
+        {tcp_closed, Sock} ->
+            Pid ! closed;
+        {tcp, Sock, Data} when is_binary(Data) ->
+            error_logger:info_report({data,Data}), 
+            NewBuf = web_sock_frame(Pid,Data,Buf),
+            web_socket_loop(C,Pid,NewBuf);
+        {tcp, Sock, Data} when is_list(Data) ->
+            NewBuf = web_sock_frame(Pid,list_to_binary(Data),Buf),
+            web_socket_loop(C,Pid,NewBuf);
+        stream_close ->
+            ?DEBUG(debug, "closing stream", []),
+            close(Sock);
+        shutdown ->
+            ?DEBUG(debug, "shutting down socket loop", []),
+            shutdown
+    end.
+
+web_sock_frame(_Pid,<<>>,Buf) ->
+    Buf;
+web_sock_frame(Pid,<<0,Rest/binary>>,_)->
+    web_sock_frame(Pid,Rest,<<>>);
+web_sock_frame(Pid,<<255,Rest/binary>>,Buf) ->
+    Pid ! {message,Buf},
+    web_sock_frame(Pid,Rest,<<>>);
+web_sock_frame(Pid,<<B,Rest/binary>>,Buf) ->
+    web_sock_frame(Pid,Rest,<<Buf/binary,B>>).
+    
+
 
 % Description: Encode headers
 enc_headers([{Tag, Val}|T]) when is_atom(Tag) ->

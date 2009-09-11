@@ -1,0 +1,2 @@
+{'*',     [{outdir, "."}]}.
+{'../src/*',     [{outdir, "../ebin"},{i,"../include"}]}
