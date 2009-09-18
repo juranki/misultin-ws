@@ -41,7 +41,7 @@ stop() ->
 % callback on request received
 handle_http(Req) ->	
 	% get params depending on method
-	Method = Req:get(method),
+        Method = Req:get(method),
 	case Method of
 		'GET' ->
 			Args = Req:parse_qs();

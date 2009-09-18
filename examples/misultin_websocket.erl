@@ -21,6 +21,8 @@ handle_http(Req) ->
 
 handle('GET',[],Req) ->
     Req:file(?WEB_SOCKET_JS_PATH ++ "/sample.html");
+handle('GET',["favicon.ico"],Req) ->
+    Req:ok([{"Content-Type", "text/plain"}], "Page not found.");
 handle('GET',[File],Req) ->
     error_logger:info_report(File),
     Req:file(?WEB_SOCKET_JS_PATH ++ "/" ++ File);
